@@ -408,41 +408,41 @@ async def conversation_timeout(
 # update_email will be an alias, handled by adding another CommandHandler pointing to set_email_command
 
 
-# async def set_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-#     """Sets the user's preferred Gemini model for chat."""
-#     chat_id = update.effective_chat.id
+async def set_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sets the user's preferred Gemini model for chat."""
+    chat_id = update.effective_chat.id
 
-#     if not context.args:
-#         available_models_text = ", ".join(config.AVAILABLE_GEMINI_MODELS)
-#         await update.message.reply_text(
-#             "Please provide a model name.\n"
-#             f"Usage: /set_model <model_name>\n"
-#             f"Available models: {available_models_text}"
-#         )
-#         return
+    if not context.args:
+        available_models_text = ", ".join(config.AVAILABLE_GEMINI_MODELS)
+        await update.message.reply_text(
+            "Please provide a model name.\n"
+            f"Usage: /set_model <model_name>\n"
+            f"Available models: {available_models_text}"
+        )
+        return
 
-#     chosen_model = context.args[0]
+    chosen_model = context.args[0]
 
-#     if chosen_model not in config.AVAILABLE_GEMINI_MODELS:
-#         available_models_text = ", ".join(config.AVAILABLE_GEMINI_MODELS)
-#         await update.message.reply_text(
-#             f"Sorry, '{chosen_model}' is not a recognized model.\n"
-#             f"Available models: {available_models_text}"
-#         )
-#         return
+    if chosen_model not in config.AVAILABLE_GEMINI_MODELS:
+        available_models_text = ", ".join(config.AVAILABLE_GEMINI_MODELS)
+        await update.message.reply_text(
+            f"Sorry, '{chosen_model}' is not a recognized model.\n"
+            f"Available models: {available_models_text}"
+        )
+        return
 
-#     if chat_id not in user_data:  # Initialize if somehow not present
-#         user_data[chat_id] = {
-#             "email": config.DEFAULT_EMAIL,
-#             "last_ai_response": None,
-#             "selected_model": chosen_model,  # Set the new model
-#         }
-#     else:
-#         user_data[chat_id]["selected_model"] = chosen_model
+    if chat_id not in user_data:  # Initialize if somehow not present
+        user_data[chat_id] = {
+            "email": config.DEFAULT_EMAIL,
+            "last_ai_response": None,
+            "selected_model": chosen_model,  # Set the new model
+        }
+    else:
+        user_data[chat_id]["selected_model"] = chosen_model
 
-#     utils.save_user_data(user_data)  # Save after setting model
-#     logger.info(f"User {chat_id} set model to {chosen_model}. Data saved.")
-#     await update.message.reply_text(f"Your AI model has been set to: {chosen_model}")
+    utils.save_user_data(user_data)  # Save after setting model
+    logger.info(f"User {chat_id} set model to {chosen_model}. Data saved.")
+    await update.message.reply_text(f"Your AI model has been set to: {chosen_model}")
 
 
 async def switch_model_command(
@@ -588,7 +588,7 @@ def main() -> None:
     application.add_handler(CommandHandler("forward", forward_command))
     # application.add_handler(CommandHandler("set_email", set_email_command)) # Old one
     # application.add_handler(CommandHandler("update_email", set_email_command)) # Old alias
-    # application.add_handler(CommandHandler("set_model", set_model_command))
+    application.add_handler(CommandHandler("set_model", set_model_command))
     application.add_handler(CommandHandler("switch_model", switch_model_command))
 
     # Add ConversationHandler for /set_email and /update_email
