@@ -1,7 +1,7 @@
 import logging
 import os
 import tempfile  # For handling large attachments
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -9,9 +9,9 @@ from telegram.ext import (
     filters,
     ContextTypes,
     CallbackQueryHandler,
+    ConversationHandler,
 )
 from telegram.constants import ParseMode
-import re
 
 # Assuming your config and utils are structured in src
 from src import config  # Loads .env variables
@@ -23,6 +23,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Conversation states for /set_email
+AWAITING_EMAIL_REPLY = 1
+CONVERSATION_TIMEOUT_SECONDS = 300  # 5 minutes
+
 # Load user data at startup
 user_data = utils.load_user_data()
 logger.info(f"Loaded user data: {len(user_data)} users.")
@@ -31,11 +35,6 @@ logger.info(f"Loaded user data: {len(user_data)} users.")
 TELEGRAM_MAX_MESSAGE_LENGTH = (
     3800  # Telegram's official limit is 4096, using a more conservative buffer
 )
-
-
-def escape_markdown_v2(text):
-    """Escape special characters for Telegram MarkdownV2."""
-    return re.sub(r"([_*\[\]()~`>#+\-=|{}.!])", r"\\\1", text)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -74,19 +73,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "selected_model", config.DEFAULT_GEMINI_MODEL
     )
 
-    # Escape all dynamic content for MarkdownV2
-    current_email_escaped = escape_markdown_v2(current_email)
-    current_model_escaped = escape_markdown_v2(current_model)
-    available_models_text = ", ".join(
-        [escape_markdown_v2(m) for m in config.AVAILABLE_GEMINI_MODELS]
-    )
+    available_models_text = ", ".join(config.AVAILABLE_GEMINI_MODELS)
     if not available_models_text:
         available_models_text = "No models configured (check .env)."
 
     help_text = f"""Here's how I can help you:
 
-Your current default email: **{current_email_escaped}**
-Your current AI model: **{current_model_escaped}**
+Your current default email: **{current_email}**
+Your current AI model: **{current_model}**
 
 **Chatting with AI:**
 Simply send me any message, and I'll pass it to the AI. I'll try to render the AI's response using Markdown formatting directly in the chat.
@@ -95,15 +89,17 @@ Simply send me any message, and I'll pass it to the AI. I'll try to render the A
 **Commands:**
 /start - Welcome message & current settings.
 /help - Show this help message.
-/set_email <email_address> - Set/update your default email for forwarding.
+/set_email [email_address] - Set/update your default email.
+  If no email is given, I will ask for it.
   Example: `/set_email user@example.com`
+/cancel_set_email - Cancel the ongoing email setting process.
 /forward - Forward the last AI response to your email. If long, it's sent as an `.md` (Markdown) file attachment.
 /switch_model - Show a menu to quickly switch between common AI models.
 /set_model <model_name> - Set a specific AI model by name. Available: {available_models_text}
-  Example: `/set_model {escape_markdown_v2(config.AVAILABLE_GEMINI_MODELS[0]) if config.AVAILABLE_GEMINI_MODELS else 'gemini-pro'}`
+  Example: `/set_model {config.AVAILABLE_GEMINI_MODELS[0] if config.AVAILABLE_GEMINI_MODELS else 'gemini-pro'}`
 
 **Note:** Your email and model preferences are saved automatically."""
-    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(help_text, parse_mode="Markdown")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -193,7 +189,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         else:
             try:
                 await update.message.reply_text(
-                    escape_markdown_v2(ai_response), parse_mode=ParseMode.MARKDOWN_V2
+                    ai_response, parse_mode=ParseMode.MARKDOWN_V2
                 )
             except Exception as e:  # Catch potential parsing errors from MarkdownV2
                 logger.warning(
@@ -222,7 +218,7 @@ async def forward_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     subject = "AI Model Response Digest"
-    body_intro = """Here's the latest response from the AI model:\n\n"""
+    body_intro = "Here's the latest response from the AI model:\n\n"
 
     # Word count for attachment decision (approximate)
     word_count = len(last_response.split())
@@ -275,47 +271,154 @@ async def forward_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
 
-async def set_email_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sets or updates the user's email address."""
+async def _process_email_update(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, email_address: str
+) -> None:
+    """Validates and saves the provided email address."""
     chat_id = update.effective_chat.id
 
-    if not context.args:
-        await update.message.reply_text(
-            "Please provide an email address.\nUsage: /set_email your_email@example.com"
-        )
-        return
-
-    new_email = context.args[0]
     # Basic email validation (can be improved with regex if needed)
-    if "@" not in new_email or "." not in new_email.split("@")[-1]:
+    if "@" not in email_address or "." not in email_address.split("@")[-1]:
         await update.message.reply_text(
-            "That doesn't look like a valid email address. Please try again."
+            "That doesn't look like a valid email address. Please try again, or use /cancel_set_email to abort."
         )
-        return
+        # If in a conversation, we might want to return the state to allow retry
+        # For now, this function is called directly or after email is received.
+        # If called from conversation handler and validation fails, the conversation handler
+        # will decide whether to end or ask for retry.
+        return  # Or raise an error to be caught by caller
 
     if chat_id not in user_data:
         user_data[chat_id] = {  # Initialize if somehow not present
-            "email": new_email,
+            "email": email_address,
             "last_ai_response": None,
             "selected_model": config.DEFAULT_GEMINI_MODEL,
         }
     else:
-        user_data[chat_id]["email"] = new_email
+        user_data[chat_id]["email"] = email_address
 
     utils.save_user_data(user_data)  # Save after setting email
-    logger.info(f"User {chat_id} set email to {new_email}. Data saved.")
-    await update.message.reply_text(f"Your email address has been set to: {new_email}")
+    logger.info(f"User {chat_id} set email to {email_address}. Data saved.")
+    await update.message.reply_text(
+        f"Your email address has been set to: {email_address}"
+    )
+
+
+async def set_email_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Handles the /set_email command.
+    If an email is provided as an argument, it's processed directly.
+    Otherwise, it asks the user to reply with their email and enters the AWAITING_EMAIL_REPLY state.
+    """
+    chat_id = update.effective_chat.id  # Used for logging perhaps
+
+    if context.args:  # Email provided directly in the command
+        email_to_set = context.args[0]
+        logger.info(f"Chat {chat_id}: /set_email called with argument: {email_to_set}")
+        await _process_email_update(update, context, email_to_set)
+        return (
+            ConversationHandler.END
+        )  # End conversation if any was active (though unlikely here) or just operate statelessly
+    else:  # No email provided, start conversation
+        logger.info(
+            f"Chat {chat_id}: /set_email called without arguments. Asking for email reply."
+        )
+        await update.message.reply_text(
+            "Please reply with the email address you'd like to set. Type /cancel_set_email to abort."
+        )
+        return AWAITING_EMAIL_REPLY  # Return the next state
+
+
+async def received_email_reply(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """
+    Handles the user's reply when the bot is awaiting an email address.
+    Processes the received text as an email.
+    """
+    chat_id = update.effective_chat.id
+    email_candidate = update.message.text
+    logger.info(f"Chat {chat_id}: Received reply for email: {email_candidate}")
+
+    # We need to check if _process_email_update was successful.
+    # _process_email_update sends its own messages for success/failure.
+    # To check success here, we can modify _process_email_update to return a boolean
+    # or re-validate here and then call it.
+
+    # Let's re-validate quickly here to decide conversation flow, then let _process_email_update do its full job.
+    if "@" not in email_candidate or "." not in email_candidate.split("@")[-1]:
+        await update.message.reply_text(
+            "That doesn't look like a valid email address. "
+            "Please try again with a valid email, or type /cancel_set_email to abort."
+        )
+        return AWAITING_EMAIL_REPLY  # Stay in the same state to allow retry
+
+    # If basic validation passes, let _process_email_update handle the detailed logic and user messaging
+    await _process_email_update(update, context, email_candidate)
+    # _process_email_update already sends confirmation or its own detailed error message.
+    # If it was successful, the user got "Your email address has been set to: ..."
+
+    # Assume if _process_email_update was called, and basic validation passed, we end.
+    # The user will see the confirmation from _process_email_update.
+    # If _process_email_update had a more subtle failure not caught by basic check,
+    # the user would see its specific error, and conversation ends. This is acceptable.
+    return ConversationHandler.END  # End the conversation
+
+
+async def cancel_set_email_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Cancels the ongoing action (e.g., setting email)."""
+    chat_id = update.effective_chat.id
+    logger.info(f"Chat {chat_id}: User cancelled the set_email conversation.")
+
+    # Check if the user was actually in a conversation state we want to cancel
+    # This basic version cancels any conversation it's a fallback for.
+    # For more specific cancellation (e.g. if user is not in AWAITING_EMAIL_REPLY state),
+    # context.user_data could be used to check a flag, but ConversationHandler handles this.
+
+    await update.message.reply_text("The email setting process has been cancelled.")
+    return ConversationHandler.END  # End the conversation
+
+
+async def conversation_timeout(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Handles conversation timeout."""
+    chat_id = update.effective_chat.id  # Or from query if it's a callback query timeout
+
+    # Check if context.user_data has any info about which conversation timed out, if needed.
+    # For this specific email conversation, we know what timed out.
+    logger.info(f"Chat {chat_id}: Conversation for setting email timed out.")
+
+    # update.callback_query will be None if it's a message based timeout
+    # update.message will be the message that triggered the timeout (if any, usually none for timeout itself)
+    # So, we need to send a new message.
+
+    # It's possible that 'update.effective_message' is what we need to reply to,
+    # but for a timeout, the original message that started the conversation might be old.
+    # Sending a new message is safer.
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="You took too long to reply. The email setting process has been cancelled.",
+    )
+    return ConversationHandler.END  # End the conversation
 
 
 # update_email will be an alias, handled by adding another CommandHandler pointing to set_email_command
 
 
 async def set_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sets the user's preferred Gemini model for chat, or shows options if no argument is given."""
+    """Sets the user's preferred Gemini model for chat."""
     chat_id = update.effective_chat.id
 
     if not context.args:
-        await switch_model_command(update, context)
+        available_models_text = ", ".join(config.AVAILABLE_GEMINI_MODELS)
+        await update.message.reply_text(
+            "Please provide a model name.\n"
+            f"Usage: /set_model <model_name>\n"
+            f"Available models: {available_models_text}"
+        )
         return
 
     chosen_model = context.args[0]
@@ -328,16 +431,16 @@ async def set_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    if chat_id not in user_data:
+    if chat_id not in user_data:  # Initialize if somehow not present
         user_data[chat_id] = {
             "email": config.DEFAULT_EMAIL,
             "last_ai_response": None,
-            "selected_model": chosen_model,
+            "selected_model": chosen_model,  # Set the new model
         }
     else:
         user_data[chat_id]["selected_model"] = chosen_model
 
-    utils.save_user_data(user_data)
+    utils.save_user_data(user_data)  # Save after setting model
     logger.info(f"User {chat_id} set model to {chosen_model}. Data saved.")
     await update.message.reply_text(f"Your AI model has been set to: {chosen_model}")
 
@@ -346,6 +449,8 @@ async def switch_model_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """Displays an inline keyboard for quick model switching."""
+    # Get up to the first 4 models from the configured available models
+    # config.AVAILABLE_GEMINI_MODELS is already loaded in src.config
     models_for_menu = config.AVAILABLE_GEMINI_MODELS[:4]
 
     if not models_for_menu:
@@ -365,6 +470,7 @@ async def switch_model_command(
             ]
         )
 
+    # Also add a button to list all available models via /set_model command, if there are more
     if len(config.AVAILABLE_GEMINI_MODELS) > len(models_for_menu):
         keyboard.append(
             [
@@ -374,7 +480,9 @@ async def switch_model_command(
                 )
             ]
         )
-    elif not config.AVAILABLE_GEMINI_MODELS:
+    elif (
+        not config.AVAILABLE_GEMINI_MODELS
+    ):  # Should be caught by models_for_menu check, but as a safeguard
         await update.message.reply_text(
             "No models configured. Use /set_model <model_name> after configuring GEMINI_MODELS in .env."
         )
@@ -390,17 +498,19 @@ async def switch_model_command(
         current_model = config.DEFAULT_GEMINI_MODEL
 
     await update.message.reply_text(
-        f"Your current AI model is: {current_model}.\n"
+        f"Your current AI model is: **{current_model}**.\n"
         "Choose a new Gemini model from the menu below:",
         reply_markup=reply_markup,
+        parse_mode=ParseMode.MARKDOWN_V2,  # For the bold current model
     )
 
 
 async def model_button_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
+    """Handles callbacks from the model selection inline keyboard."""
     query = update.callback_query
-    await query.answer()
+    await query.answer()  # Answer the callback query immediately
 
     callback_data = query.data
     chat_id = query.message.chat_id
@@ -411,16 +521,20 @@ async def model_button_callback(
             available_models_text = "None configured."
         await query.edit_message_text(
             text=f"To select from all available models, please use the command:\n"
-            f"/set_model <model_name>\n\n"
+            f"`/set_model <model_name>`\n\n"
             f"Available models: {available_models_text}\n\n"
-            f"Example: /set_model {config.AVAILABLE_GEMINI_MODELS[0] if config.AVAILABLE_GEMINI_MODELS else 'gemini-pro'}"
+            f"Example: `/set_model {config.AVAILABLE_GEMINI_MODELS[0] if config.AVAILABLE_GEMINI_MODELS else 'gemini-pro'}`",
+            parse_mode=ParseMode.MARKDOWN_V2,  # Using markdown for the command example
         )
         return
 
+    # Expected format: "model_select:MODEL_NAME"
     try:
         action, model_name = callback_data.split(":", 1)
         if action == "model_select" and model_name in config.AVAILABLE_GEMINI_MODELS:
-            if chat_id not in user_data:
+            if (
+                chat_id not in user_data
+            ):  # Should be initialized by /start or other commands
                 user_data[chat_id] = {
                     "email": config.DEFAULT_EMAIL,
                     "last_ai_response": None,
@@ -434,7 +548,11 @@ async def model_button_callback(
                 f"User {chat_id} selected model '{model_name}' via menu. Data saved."
             )
 
-            await query.edit_message_text(text=f"AI model set to: {model_name}")
+            # Edit the original message to confirm selection and remove keyboard
+            await query.edit_message_text(
+                text=f"AI model set to: **{model_name}**",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
         else:
             logger.warning(
                 f"Invalid or unknown model in callback_data for chat_id {chat_id}: {callback_data}"
@@ -453,6 +571,7 @@ async def model_button_callback(
         logger.error(
             f"An unexpected error occurred in model_button_callback for chat_id {chat_id}: {e}"
         )
+        # Try to send a new message if editing fails or is inappropriate
         await context.bot.send_message(
             chat_id=chat_id, text="An error occurred. Please try selecting again."
         )
@@ -468,36 +587,40 @@ def main() -> None:
 
     application = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
 
-    # Set bot commands for the menu in Telegram
-    commands = [
-        BotCommand("start", "Welcome message & current settings"),
-        BotCommand("help", "Show help message"),
-        BotCommand("set_email", "Set/update your default email for forwarding"),
-        BotCommand("forward", "Forward the last AI response to your email"),
-        BotCommand("set_model", "Set the AI model to use for chat"),
-        BotCommand("switch_model", "Show a menu to quickly switch between AI models"),
-    ]
-
-    async def set_my_commands(app):
-        await app.bot.set_my_commands(commands)
-
-    application.post_init = set_my_commands
-
     # Command Handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("forward", forward_command))
-    application.add_handler(CommandHandler("set_email", set_email_command))
-    application.add_handler(CommandHandler("update_email", set_email_command))  # Alias
+    # application.add_handler(CommandHandler("set_email", set_email_command)) # Old one
+    # application.add_handler(CommandHandler("update_email", set_email_command)) # Old alias
     application.add_handler(CommandHandler("set_model", set_model_command))
     application.add_handler(CommandHandler("switch_model", switch_model_command))
+
+    # Add ConversationHandler for /set_email and /update_email
+    set_email_conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("set_email", set_email_command),
+            CommandHandler("update_email", set_email_command),  # Alias entry point
+        ],
+        states={
+            AWAITING_EMAIL_REPLY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, received_email_reply)
+            ],
+            ConversationHandler.TIMEOUT: [  # Handler for the timeout event
+                conversation_timeout  # Our previously defined timeout function
+            ],
+        },
+        fallbacks=[CommandHandler("cancel_set_email", cancel_set_email_command)],
+        conversation_timeout=CONVERSATION_TIMEOUT_SECONDS,  # Set the timeout duration
+    )
+    application.add_handler(set_email_conv_handler)
 
     # CallbackQueryHandler for model selection
     application.add_handler(
         CallbackQueryHandler(model_button_callback, pattern="^model_select:")
     )
 
-    # Message Handler for AI interaction
+    # Message Handler for AI interaction (ensure it's added after ConversationHandler or with a lower group if needed)
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
