@@ -1,0 +1,5 @@
+.env
+src/__pycache__/bot.cpython-311.pyc
+src/__pycache__/config.cpython-311.pyc
+src/__pycache__/utils.cpython-311.pyc
+data/user_data.json
