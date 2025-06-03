@@ -33,3 +33,10 @@ if DEFAULT_GEMINI_MODEL not in AVAILABLE_GEMINI_MODELS:
 # Data persistence path
 DATA_PATH = "/app/data/" # Path inside the Docker container
 USER_DATA_FILE = os.path.join(DATA_PATH, "user_data.json")
+
+# SMTP Configuration for sending emails
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT_STR = os.getenv("SMTP_PORT", "587")
+SMTP_USERNAME = os.getenv("SMTP_USERNAME")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_PORT = int(SMTP_PORT_STR) if SMTP_PORT_STR.isdigit() else 587 # Simplified conversion

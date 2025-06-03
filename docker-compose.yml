@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  ai_email_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai_email_bot_container
+    # Restart policy
+    restart: unless-stopped
+    # Environment file
+    # This tells Docker Compose to load environment variables from the .env file
+    # in the project's root directory (where docker-compose up is run)
+    env_file:
+      - .env
+    # Volumes for persistent data
+    # Maps ./data on the host to /app/data in the container
+    # This ensures that user_data.json persists across container restarts
+    volumes:
+      - ./data:/app/data
+    # If you need to ensure buildx is used for a specific platform (e.g., arm64)
+    # you typically specify this during the build command itself, like:
+    # DOCKER_DEFAULT_PLATFORM=linux/arm64 docker-compose build
+    # or for buildx directly:
+    # docker buildx build --platform linux/arm64 -t your-image-name .
+    # Docker Compose v2.x and later versions have better multi-platform support.
+    # You can add 'platform: linux/arm64' under the service if your Docker Compose version supports it
+    # and you want to specify the runtime platform.
+    # platform: linux/arm64 # Uncomment if your Docker Compose version supports it & it's needed for runtime
+
+networks:
+  default:
+    driver: bridge

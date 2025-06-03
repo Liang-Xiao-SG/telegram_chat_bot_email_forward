@@ -23,7 +23,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message when the /start command is issued."""
     user = update.effective_user
     chat_id = update.effective_chat.id
-    
+
     # Initialize user data if not present
     if chat_id not in user_data:
         user_data[chat_id] = {
@@ -55,7 +55,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     chat_id = update.effective_chat.id
     current_email = user_data.get(chat_id, {}).get('email') or 'Not set'
     current_model = user_data.get(chat_id, {}).get('selected_model', config.DEFAULT_GEMINI_MODEL)
-    
+
     available_models_text = ", ".join(config.AVAILABLE_GEMINI_MODELS)
     if not available_models_text:
         available_models_text = "No models configured (check .env)."
@@ -109,13 +109,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "last_ai_response": None,
             "selected_model": config.DEFAULT_GEMINI_MODEL
         }
-    
+
     selected_model = user_data[chat_id].get("selected_model", config.DEFAULT_GEMINI_MODEL)
 
     await update.message.reply_text(f"🤖 Thinking with {selected_model}...", disable_notification=True)
-    
+
     ai_response = await utils.generate_text(prompt=user_message, model_name=selected_model)
-    
+
     if ai_response and not ai_response.startswith("Error:"):
         user_data[chat_id]["last_ai_response"] = ai_response
         utils.save_user_data(user_data) # Save after storing AI response
@@ -145,7 +145,7 @@ async def forward_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     body_intro = "Here's the latest response from the AI model:
 
 "
-    
+
     # Word count for attachment decision (approximate)
     word_count = len(last_response.split())
     max_words_inline = 1000 # As per requirement
@@ -156,10 +156,10 @@ async def forward_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".txt", encoding='utf-8') as tmp_file:
                 tmp_file.write(last_response)
                 attachment_path = tmp_file.name
-            
+
             attachment_filename = "ai_response.txt"
             email_body = body_intro + "The full response is attached as a text file due to its length."
-            
+
             success = utils.send_email(
                 receiver_email=email_address,
                 subject=subject,
@@ -188,7 +188,7 @@ async def forward_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def set_email_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sets or updates the user's email address."""
     chat_id = update.effective_chat.id
-    
+
     if not context.args:
         await update.message.reply_text("Please provide an email address.\nUsage: /set_email your_email@example.com")
         return
@@ -207,7 +207,7 @@ async def set_email_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         }
     else:
         user_data[chat_id]["email"] = new_email
-    
+
     utils.save_user_data(user_data) # Save after setting email
     logger.info(f"User {chat_id} set email to {new_email}. Data saved.")
     await update.message.reply_text(f"Your email address has been set to: {new_email}")
@@ -217,7 +217,7 @@ async def set_email_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def set_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sets the user's preferred Gemini model for chat."""
     chat_id = update.effective_chat.id
-    
+
     if not context.args:
         available_models_text = ", ".join(config.AVAILABLE_GEMINI_MODELS)
         await update.message.reply_text(
@@ -245,7 +245,7 @@ async def set_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         }
     else:
         user_data[chat_id]["selected_model"] = chosen_model
-    
+
     utils.save_user_data(user_data) # Save after setting model
     logger.info(f"User {chat_id} set model to {chosen_model}. Data saved.")
     await update.message.reply_text(f"Your AI model has been set to: {chosen_model}")

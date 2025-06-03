@@ -32,7 +32,7 @@ async def generate_text(prompt: str, model_name: str = None) -> str:
 
     Args:
         prompt: The text prompt to send to the model.
-        model_name: The name of the Gemini model to use. 
+        model_name: The name of the Gemini model to use.
                     Defaults to DEFAULT_GEMINI_MODEL from config.
 
     Returns:
@@ -42,7 +42,7 @@ async def generate_text(prompt: str, model_name: str = None) -> str:
         return "Error: Gemini API Key is not configured."
 
     selected_model_name = model_name if model_name and model_name in config.AVAILABLE_GEMINI_MODELS else config.DEFAULT_GEMINI_MODEL
-    
+
     if not selected_model_name:
         return "Error: No Gemini model is selected or configured."
 
@@ -51,7 +51,7 @@ async def generate_text(prompt: str, model_name: str = None) -> str:
     try:
         model = genai.GenerativeModel(selected_model_name)
         response = await model.generate_content_async(prompt) # Using async version
-        
+
         # Ensure response.text is accessed correctly
         # Based on Gemini API, the response might be more complex.
         # For simple text, response.text should work.
@@ -82,20 +82,12 @@ def send_email(receiver_email: str, subject: str, body: str, attachment_path: st
     For this to work, you'll need to configure SMTP settings.
     These are placeholders and should be configured via environment variables for production.
     """
-    # SMTP Configuration - These should ideally be in config.py and loaded from .env
-    # For simplicity in this step, using placeholders.
-    # IMPORTANT: For a real application, use config variables for these.
-    SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com") # Example: 'smtp.gmail.com'
-    SMTP_PORT = int(os.getenv("SMTP_PORT", 587)) # Example: 587 (TLS) or 465 (SSL)
-    SMTP_USERNAME = os.getenv("SMTP_USERNAME") # Your email address
-    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") # Your email password or app password
-
-    if not all([SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD]):
-        logger.error("SMTP server settings are not fully configured. Cannot send email.")
-        # In a real bot, you might want to inform the user or admin.
+    # Use SMTP settings from src.config
+    if not all([config.SMTP_SERVER, config.SMTP_PORT, config.SMTP_USERNAME, config.SMTP_PASSWORD]):
+        logger.error("SMTP server settings are not fully configured in .env. Cannot send email.")
         return False
 
-    sender_email = SMTP_USERNAME
+    sender_email = config.SMTP_USERNAME
 
     msg = MIMEMultipart()
     msg["From"] = sender_email
@@ -122,14 +114,14 @@ def send_email(receiver_email: str, subject: str, body: str, attachment_path: st
             # For now, we'll let it try to send without it or fail if crucial
 
     try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        with smtplib.SMTP(config.SMTP_SERVER, config.SMTP_PORT) as server:
             server.starttls()  # Secure the connection
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.login(config.SMTP_USERNAME, config.SMTP_PASSWORD)
             server.sendmail(sender_email, receiver_email, msg.as_string())
         logger.info(f"Email sent successfully to {receiver_email}")
         return True
     except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"SMTP Authentication Error: {e}. Check your SMTP_USERNAME and SMTP_PASSWORD.")
+        logger.error(f"SMTP Authentication Error: {e}. Check your SMTP_USERNAME ({config.SMTP_USERNAME}) and SMTP_PASSWORD.")
         return False
     except Exception as e:
         logger.error(f"Error sending email to {receiver_email}: {e}")
@@ -181,10 +173,10 @@ if __name__ == '__main__':
     # Example usage (for testing utils.py directly)
     # Note: This requires .env to be correctly set up in the root directory
     # or where this script is run from, if not using a main application entry point.
-    
+
     # To run this test, you might need to adjust Python's import path
     # or run as a module: python -m src.utils
-    
+
     # print("Available models:", list_gemini_models())
     # import asyncio
     # async def test_generation():
