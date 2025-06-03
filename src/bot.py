@@ -19,7 +19,7 @@ user_data = utils.load_user_data()
 logger.info(f"Loaded user data: {len(user_data)} users.")
 
 # Define a constant for Telegram message length limit
-TELEGRAM_MAX_MESSAGE_LENGTH = 4000 # Telegram's official limit is 4096, using a slightly smaller buffer
+TELEGRAM_MAX_MESSAGE_LENGTH = 3800 # Telegram's official limit is 4096, using a more conservative buffer
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message when the /start command is issued."""
