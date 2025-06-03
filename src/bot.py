@@ -498,10 +498,9 @@ async def switch_model_command(
         current_model = config.DEFAULT_GEMINI_MODEL
 
     await update.message.reply_text(
-        f"Your current AI model is: **{current_model}**.\n"
+        f"Your current AI model is: {current_model}\n"
         "Choose a new Gemini model from the menu below:",
         reply_markup=reply_markup,
-        parse_mode=ParseMode.MARKDOWN_V2,  # For the bold current model
     )
 
 
@@ -524,7 +523,6 @@ async def model_button_callback(
             f"`/set_model <model_name>`\n\n"
             f"Available models: {available_models_text}\n\n"
             f"Example: `/set_model {config.AVAILABLE_GEMINI_MODELS[0] if config.AVAILABLE_GEMINI_MODELS else 'gemini-pro'}`",
-            parse_mode=ParseMode.MARKDOWN_V2,  # Using markdown for the command example
         )
         return
 
@@ -549,10 +547,7 @@ async def model_button_callback(
             )
 
             # Edit the original message to confirm selection and remove keyboard
-            await query.edit_message_text(
-                text=f"AI model set to: **{model_name}**",
-                parse_mode=ParseMode.MARKDOWN_V2,
-            )
+            await query.edit_message_text(text=f"AI model set to: {model_name}")
         else:
             logger.warning(
                 f"Invalid or unknown model in callback_data for chat_id {chat_id}: {callback_data}"
