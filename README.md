@@ -145,3 +145,6 @@ User data (email address, selected AI model, and the last AI response) is stored
 ---
 
 Feel free to contribute or report issues!
+
+## this need to run within WSL environement
+docker buildx build --platform linux/arm64 -t <Docker Hub account>/ai_email_bot --push .
