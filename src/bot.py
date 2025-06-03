@@ -41,16 +41,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         rf"Hi {user.mention_html()}!",
     )
     await update.message.reply_text(
-        "Welcome to the AI Forwarder Bot! I can help you chat with an AI model "
-        "and forward the responses to your email address.
+        f"""Welcome to the AI Forwarder Bot! I can help you chat with an AI model and forward the responses to your email address.
 
-"
-        f"Your current default email is: {user_data[chat_id].get('email') or 'Not set'}
-"
-        f"Your current AI model is: {user_data[chat_id].get('selected_model')}
+Your current default email is: {user_data[chat_id].get('email') or 'Not set'}
+Your current AI model is: {user_data[chat_id].get('selected_model')}
 
-"
-        "Use /help to see all commands."
+Use /help to see all commands."""
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
