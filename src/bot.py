@@ -3,6 +3,7 @@ import os
 import tempfile # For handling large attachments
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ParseMode
 
 # Assuming your config and utils are structured in src
 from src import config  # Loads .env variables
@@ -74,9 +75,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "**Chatting with AI:**
 "
         "Simply send me any message, and I'll pass it to the AI. "
-        "I'll send you back the AI's response.
+        "I'll try to render the AI's response using Markdown formatting directly in the chat.
 "
-        "*(If an AI response is too long for a direct message, I'll send it as a text file instead.)*
+        "*(If an AI response is too long for a direct message, I'll send it as an `.md` (Markdown) file instead.)*
 
 "
         "**Commands:**
@@ -144,7 +145,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if len(ai_response) > TELEGRAM_MAX_MESSAGE_LENGTH:
         logger.info(f"AI response for chat_id {chat_id} is too long ({len(ai_response)} chars). Sending as a file.")
         try:
-            with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".txt", encoding='utf-8') as tmp_file:
+            with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".md", encoding='utf-8') as tmp_file:
                 tmp_file.write(ai_response)
                 attachment_path = tmp_file.name
 
@@ -152,7 +153,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await context.bot.send_document(
                 chat_id=chat_id,
                 document=open(attachment_path, 'rb'),
-                filename="ai_response.txt",
+                filename="ai_response.md",
                 caption=caption_text
             )
             os.remove(attachment_path) # Clean up the temp file
@@ -161,7 +162,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.error(f"Error sending long AI response as file to {chat_id}: {e}")
             await update.message.reply_text("There was an error sending the AI's long response as a file. You can try using /forward to get it via email.")
     else:
-        await update.message.reply_text(ai_response)
+        is_error_or_generic_response = ai_response.startswith("Error:") or ai_response == "Sorry, I received an empty response from the AI."
+        if is_error_or_generic_response:
+            await update.message.reply_text(ai_response) # Send errors/generic as plain text
+        else:
+            try:
+                await update.message.reply_text(ai_response, parse_mode=ParseMode.MARKDOWN_V2)
+            except Exception as e: # Catch potential parsing errors from MarkdownV2
+                logger.warning(f"Failed to send message with MarkdownV2 for chat_id {chat_id}: {e}. Sending as plain text.")
+                await update.message.reply_text(ai_response) # Fallback to plain text
 
 async def forward_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Forwards the last AI response to the user's configured email address."""
@@ -190,12 +199,12 @@ async def forward_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if word_count > max_words_inline:
         await update.message.reply_text(f"The response is quite long ({word_count} words). Preparing it as an attachment...")
         try:
-            with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".txt", encoding='utf-8') as tmp_file:
+            with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".md", encoding='utf-8') as tmp_file:
                 tmp_file.write(last_response)
                 attachment_path = tmp_file.name
 
-            attachment_filename = "ai_response.txt"
-            email_body = body_intro + "The full response is attached as a text file due to its length."
+            attachment_filename = "ai_response.md"
+            email_body = body_intro + "The full response is attached as a Markdown (.md) file due to its length."
 
             success = utils.send_email(
                 receiver_email=email_address,
