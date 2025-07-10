@@ -40,3 +40,18 @@ SMTP_PORT_STR = os.getenv("SMTP_PORT", "587")
 SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_PORT = int(SMTP_PORT_STR) if SMTP_PORT_STR.isdigit() else 587 # Simplified conversion
+
+# File size and attachment limits
+# Telegram Bot API limits
+TELEGRAM_MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB for bots
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096  # Official limit
+TELEGRAM_MAX_MESSAGE_LENGTH_SAFE = 3800  # Conservative buffer
+
+# Gmail attachment limits
+GMAIL_MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024  # 25MB per attachment
+GMAIL_MAX_TOTAL_SIZE = 25 * 1024 * 1024  # 25MB total email size including body
+GMAIL_MAX_ATTACHMENTS = 10  # Reasonable limit for multiple attachments
+
+# Bot-specific limits
+MAX_ATTACHMENTS_PER_FORWARD = 5  # Limit to prevent spam
+MAX_ATTACHMENT_QUEUE_SIZE = 10  # Maximum attachments to keep in queue per user

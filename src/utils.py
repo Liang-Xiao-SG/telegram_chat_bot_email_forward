@@ -127,6 +127,65 @@ def send_email(receiver_email: str, subject: str, body: str, attachment_path: st
         logger.error(f"Error sending email to {receiver_email}: {e}")
         return False
 
+def send_multiple_attachments_email(receiver_email: str, subject: str, body: str, attachments: list) -> bool:
+    """
+    Sends an email with multiple attachments using SMTP.
+    
+    Args:
+        receiver_email: Email address to send to
+        subject: Email subject
+        body: Email body text
+        attachments: List of dicts with 'path', 'filename', and 'info' keys
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    # Use SMTP settings from src.config
+    if not all([config.SMTP_SERVER, config.SMTP_PORT, config.SMTP_USERNAME, config.SMTP_PASSWORD]):
+        logger.error("SMTP server settings are not fully configured in .env. Cannot send email.")
+        return False
+
+    sender_email = config.SMTP_USERNAME
+
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = receiver_email
+    msg["Subject"] = subject
+
+    msg.attach(MIMEText(body, "plain"))
+
+    # Add all attachments
+    for attachment in attachments:
+        try:
+            with open(attachment["path"], "rb") as file:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(file.read())
+            encoders.encode_base64(part)
+            part.add_header(
+                "Content-Disposition",
+                f"attachment; filename= {attachment['filename']}",
+            )
+            msg.attach(part)
+            logger.info(f"Attached file: {attachment['filename']} from path: {attachment['path']}")
+        except Exception as e:
+            logger.error(f"Error attaching file {attachment['filename']} from {attachment['path']}: {e}")
+            # Continue with other attachments even if one fails
+            continue
+
+    try:
+        with smtplib.SMTP(config.SMTP_SERVER, config.SMTP_PORT) as server:
+            server.starttls()  # Secure the connection
+            server.login(config.SMTP_USERNAME, config.SMTP_PASSWORD)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
+        logger.info(f"Email with {len(attachments)} attachments sent successfully to {receiver_email}")
+        return True
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error(f"SMTP Authentication Error: {e}. Check your SMTP_USERNAME ({config.SMTP_USERNAME}) and SMTP_PASSWORD.")
+        return False
+    except Exception as e:
+        logger.error(f"Error sending email with multiple attachments to {receiver_email}: {e}")
+        return False
+
 # Functions for loading and saving user data
 def load_user_data() -> dict:
     """Loads user data from the JSON file specified in config."""
