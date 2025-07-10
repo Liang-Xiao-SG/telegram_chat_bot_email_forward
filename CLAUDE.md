@@ -15,6 +15,7 @@ DOCKER_DEFAULT_PLATFORM=linux/arm64 docker-compose build
 DOCKER_DEFAULT_PLATFORM=linux/arm64 docker-compose up -d
 
 # Alternative with docker buildx for ARM64
+# run inside WSL only
 docker buildx build --platform linux/arm64 -t jy02148548/ai_email_bot --push .
 
 # View logs
