@@ -84,6 +84,7 @@ Simply send me any message, and I'll pass it to the AI. I'll try to render the A
 
 **File Attachments:**
 Send me documents or photos and I'll queue them for forwarding. You can send multiple files and forward them all at once.
+📱 iOS formats (HEIC, HEIF) are automatically converted to JPEG for email compatibility.
 
 **Commands:**
 /start - Welcome message & current settings.
@@ -243,7 +244,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
     
-    # Store document information
+    # Store document information with enhanced MIME type detection
     attachment_info = {
         "type": "document",
         "file_id": document.file_id,
@@ -251,7 +252,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "mime_type": document.mime_type or "application/octet-stream",
         "file_size": document.file_size or 0,
         "timestamp": update.message.date.isoformat(),
+        "needs_conversion": False,  # Will be determined during forwarding for images
     }
+    
+    # Check if document is actually an image that might need conversion
+    file_extension = os.path.splitext(attachment_info["file_name"])[1].lower()
+    image_extensions = ['.heic', '.heif', '.avif', '.webp', '.tiff', '.tif', '.bmp']
+    
+    if (attachment_info["mime_type"].startswith("image/") or 
+        file_extension in image_extensions or
+        attachment_info["mime_type"] in utils.IOS_IMAGE_FORMATS):
+        attachment_info["needs_conversion"] = True
+        attachment_info["type"] = "image_document"  # Special type for image documents
     
     user_data[chat_id]["attachments_queue"].append(attachment_info)
     user_data[chat_id]["last_ai_response"] = None  # Clear AI response when attachment is received
@@ -260,8 +272,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     logger.info(f"Stored document attachment for chat_id {chat_id}: {document.file_name}")
     
     queue_count = len(user_data[chat_id]["attachments_queue"])
+    
+    # Show format info if conversion might be needed
+    format_info = ""
+    if attachment_info["needs_conversion"]:
+        format_info = "\n🔄 Image format detected - will be converted to JPEG for email compatibility"
+    
     await update.message.reply_text(
-        f"📎 Document received: {document.file_name}\n"
+        f"📎 Document received: {document.file_name}{format_info}\n"
         f"📊 Attachments in queue: {queue_count}/{config.MAX_ATTACHMENT_QUEUE_SIZE}\n"
         f"Use /forward to send all attachments to your email address."
     )
@@ -301,28 +319,66 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
     
-    # Store photo information
-    attachment_info = {
-        "type": "photo",
-        "file_id": photo.file_id,
-        "file_name": f"photo_{photo.file_unique_id}.jpg",
-        "mime_type": "image/jpeg",
-        "file_size": photo.file_size or 0,
-        "timestamp": update.message.date.isoformat(),
-    }
-    
-    user_data[chat_id]["attachments_queue"].append(attachment_info)
-    user_data[chat_id]["last_ai_response"] = None  # Clear AI response when attachment is received
-    
-    utils.save_user_data(user_data)
-    logger.info(f"Stored photo attachment for chat_id {chat_id}")
-    
-    queue_count = len(user_data[chat_id]["attachments_queue"])
-    await update.message.reply_text(
-        f"📷 Photo received!\n"
-        f"📊 Attachments in queue: {queue_count}/{config.MAX_ATTACHMENT_QUEUE_SIZE}\n"
-        f"Use /forward to send all attachments to your email address."
-    )
+    # Download and process the photo to detect format
+    try:
+        file = await context.bot.get_file(photo.file_id)
+        
+        # Create a temporary file to analyze the image
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".img") as tmp_file:
+            await file.download_to_drive(tmp_file.name)
+            temp_path = tmp_file.name
+        
+        # Process the image to detect format and convert if needed
+        processed_path, final_filename, final_mime_type = utils.process_image_attachment(
+            temp_path, f"photo_{photo.file_unique_id}.jpg"
+        )
+        
+        # If a conversion was done, we need to update the file info
+        if processed_path != temp_path:
+            # Get the size of the converted file
+            converted_size = os.path.getsize(processed_path)
+            os.remove(temp_path)  # Remove original temp file
+            logger.info(f"Photo converted: {final_filename}, size: {converted_size} bytes")
+        else:
+            converted_size = photo.file_size or 0
+            os.remove(temp_path)  # Clean up temp file
+        
+        # Store photo information
+        attachment_info = {
+            "type": "photo",
+            "file_id": photo.file_id,
+            "file_name": final_filename,
+            "mime_type": final_mime_type,
+            "file_size": converted_size,
+            "timestamp": update.message.date.isoformat(),
+            "needs_conversion": processed_path != temp_path,  # Flag for conversion
+            "original_format": "Unknown",  # Will be detected during forwarding
+        }
+        
+        user_data[chat_id]["attachments_queue"].append(attachment_info)
+        user_data[chat_id]["last_ai_response"] = None  # Clear AI response when attachment is received
+        
+        utils.save_user_data(user_data)
+        logger.info(f"Stored photo attachment for chat_id {chat_id}: {final_filename}")
+        
+        queue_count = len(user_data[chat_id]["attachments_queue"])
+        
+        # Show format info if conversion was needed
+        format_info = ""
+        if attachment_info["needs_conversion"]:
+            format_info = "\n🔄 iOS format detected - will be converted to JPEG for email compatibility"
+        
+        await update.message.reply_text(
+            f"📷 Photo received: {final_filename}{format_info}\n"
+            f"📊 Attachments in queue: {queue_count}/{config.MAX_ATTACHMENT_QUEUE_SIZE}\n"
+            f"Use /forward to send all attachments to your email address."
+        )
+        
+    except Exception as e:
+        logger.error(f"Error processing photo for chat_id {chat_id}: {e}")
+        await update.message.reply_text(
+            "❌ Sorry, there was an error processing the photo. Please try again."
+        )
 
 
 async def forward_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -388,8 +444,43 @@ async def _forward_multiple_attachments(update: Update, context: ContextTypes.DE
             # Create a temporary file to store the attachment
             with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
                 await file.download_to_drive(tmp_file.name)
+                original_path = tmp_file.name
+            
+            # Process images for format conversion if needed
+            if (attachment_info["type"] in ["photo", "image_document"] or 
+                attachment_info.get("needs_conversion", False)):
+                try:
+                    processed_path, final_filename, final_mime_type = utils.process_image_attachment(
+                        original_path, attachment_info["file_name"]
+                    )
+                    
+                    # If conversion happened, clean up original and use converted
+                    if processed_path != original_path:
+                        os.remove(original_path)
+                        temp_files.append({
+                            "path": processed_path,
+                            "filename": final_filename,
+                            "info": attachment_info
+                        })
+                        logger.info(f"Converted attachment {i+1}: {final_filename}")
+                    else:
+                        temp_files.append({
+                            "path": original_path,
+                            "filename": attachment_info["file_name"],
+                            "info": attachment_info
+                        })
+                except Exception as e:
+                    logger.error(f"Error processing image attachment {i+1}: {e}")
+                    # Use original file if processing fails
+                    temp_files.append({
+                        "path": original_path,
+                        "filename": attachment_info["file_name"],
+                        "info": attachment_info
+                    })
+            else:
+                # Non-image attachment, use as-is
                 temp_files.append({
-                    "path": tmp_file.name,
+                    "path": original_path,
                     "filename": attachment_info["file_name"],
                     "info": attachment_info
                 })

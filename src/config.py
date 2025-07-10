@@ -55,3 +55,7 @@ GMAIL_MAX_ATTACHMENTS = 10  # Reasonable limit for multiple attachments
 # Bot-specific limits
 MAX_ATTACHMENTS_PER_FORWARD = 5  # Limit to prevent spam
 MAX_ATTACHMENT_QUEUE_SIZE = 10  # Maximum attachments to keep in queue per user
+
+# Image processing settings
+IMAGE_CONVERSION_QUALITY = int(os.getenv("IMAGE_CONVERSION_QUALITY", "100"))  # JPEG quality 1-100
+CONVERT_IOS_FORMATS = os.getenv("CONVERT_IOS_FORMATS", "true").lower() == "true"  # Enable/disable iOS format conversion

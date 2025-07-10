@@ -8,8 +8,132 @@ from email.mime.base import MIMEBase
 from email import encoders
 import os # For path joining if needed for attachments
 import json
+import tempfile
+from PIL import Image
+import pillow_heif
+import mimetypes
+
+# Register HEIF opener with Pillow
+pillow_heif.register_heif_opener()
 
 logger = logging.getLogger(__name__)
+
+# iOS and other image format mappings
+IOS_IMAGE_FORMATS = {
+    'image/heic': '.heic',
+    'image/heif': '.heif',
+    'image/avif': '.avif',
+    'image/webp': '.webp',
+}
+
+SUPPORTED_OUTPUT_FORMATS = ['JPEG', 'PNG', 'WebP']
+
+def detect_image_format(file_path: str) -> tuple[str, str]:
+    """
+    Detect image format and return format name and MIME type.
+    
+    Args:
+        file_path: Path to the image file
+        
+    Returns:
+        tuple: (format_name, mime_type)
+    """
+    try:
+        with Image.open(file_path) as img:
+            format_name = img.format
+            mime_type = f"image/{format_name.lower()}" if format_name else "image/jpeg"
+            
+            # Handle special cases
+            if format_name == 'JPEG':
+                mime_type = "image/jpeg"
+            elif format_name == 'HEIF':
+                mime_type = "image/heic"
+                
+            return format_name, mime_type
+    except Exception as e:
+        logger.warning(f"Could not detect image format for {file_path}: {e}")
+        # Fallback to mimetypes
+        mime_type, _ = mimetypes.guess_type(file_path)
+        return "UNKNOWN", mime_type or "application/octet-stream"
+
+def convert_image_to_jpeg(input_path: str, output_path: str, quality: int = None) -> bool:
+    """
+    Convert any supported image format to JPEG.
+    
+    Args:
+        input_path: Path to input image
+        output_path: Path for output JPEG
+        quality: JPEG quality (1-100), uses config default if None
+        
+    Returns:
+        bool: True if conversion successful, False otherwise
+    """
+    if quality is None:
+        quality = config.IMAGE_CONVERSION_QUALITY
+        
+    try:
+        with Image.open(input_path) as img:
+            # Convert to RGB mode for JPEG (removes alpha channel if present)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                # Create white background for transparent images
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'P':
+                    img = img.convert('RGBA')
+                background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                img = background
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Save as JPEG
+            img.save(output_path, 'JPEG', quality=quality, optimize=True)
+            logger.info(f"Successfully converted image to JPEG: {output_path} (quality: {quality})")
+            return True
+            
+    except Exception as e:
+        logger.error(f"Error converting image to JPEG: {e}")
+        return False
+
+def process_image_attachment(file_path: str, original_filename: str) -> tuple[str, str, str]:
+    """
+    Process an image attachment, converting iOS formats if needed.
+    
+    Args:
+        file_path: Path to the downloaded image file
+        original_filename: Original filename from Telegram
+        
+    Returns:
+        tuple: (processed_file_path, final_filename, mime_type)
+    """
+    try:
+        # Detect the actual format
+        format_name, detected_mime = detect_image_format(file_path)
+        logger.info(f"Detected image format: {format_name}, MIME: {detected_mime}")
+        
+        # Check if it's an iOS-specific format that needs conversion
+        if (config.CONVERT_IOS_FORMATS and 
+            (detected_mime in IOS_IMAGE_FORMATS or format_name in ['HEIF', 'HEIC', 'AVIF'])):
+            logger.info(f"Converting iOS/unsupported format {format_name} to JPEG")
+            
+            # Create output path for converted image
+            base_name = os.path.splitext(original_filename)[0]
+            converted_filename = f"{base_name}_converted.jpg"
+            converted_path = file_path + "_converted.jpg"
+            
+            # Convert to JPEG
+            if convert_image_to_jpeg(file_path, converted_path):
+                return converted_path, converted_filename, "image/jpeg"
+            else:
+                # If conversion fails, return original
+                logger.warning(f"Conversion failed, using original file")
+                return file_path, original_filename, detected_mime
+        else:
+            # No conversion needed
+            return file_path, original_filename, detected_mime
+            
+    except Exception as e:
+        logger.error(f"Error processing image attachment: {e}")
+        # Return original file if processing fails
+        return file_path, original_filename, "image/jpeg"
 
 # Configure the Gemini API client
 if config.GEMINI_API_KEY:
