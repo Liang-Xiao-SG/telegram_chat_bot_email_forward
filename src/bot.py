@@ -67,15 +67,18 @@ I can help you:
 Commands:
 /start - Start using the bot
 /help - Show detailed help
-/email - Set your email address
-/models - Choose AI model
+/email - Set your email (interactive)
+/set_email <email> - Set email directly
+/update_email <email> - Alias for set_email
+/models - Choose AI model (interactive)
+/set_model <model> - Set model directly
 /forward - Forward last response
 /status - Check your settings
 /clear_attachments - Clear attachment queue
 
 Send me a message to chat with AI, or send documents/photos to queue them for forwarding."""
 
-    ERROR_EMAIL_NOT_SET = f"{EMOJI_EMAIL} Please set your email address first using /email command."
+    ERROR_EMAIL_NOT_SET = f"{EMOJI_EMAIL} Please set your email address first using /set_email or /email command."
     ERROR_NO_CONTENT = f"{EMOJI_WARNING} Nothing to forward. Chat with AI or send attachments first."
     ERROR_FILE_TOO_LARGE = f"{EMOJI_ERROR} File is too large. Maximum size: {{max_size}}."
     ERROR_QUEUE_FULL = f"{EMOJI_WARNING} Attachment queue is full. Use /clear_attachments to make space."
@@ -341,13 +344,20 @@ class ResponseFormatter:
 • `/status` - Check your current settings and queued content
 
 **Email Configuration:**
-• `/email` - Set or update your email address
+• `/email` - Set or update your email address (interactive)
+• `/set_email <email>` - Set email directly: `/set_email user@example.com`
+• `/update_email <email>` - Same as set_email (alias)
 • Must be set before forwarding any content
 
 **AI Interaction:**
 • Just send a text message to chat with AI
 • Responses are automatically saved for forwarding
-• Use `/models` to switch between available AI models
+• Use `/models` or `/set_model` to switch between AI models
+
+**Model Selection:**
+• `/models` - Choose from available AI models (interactive)
+• `/set_model <model>` - Set model directly: `/set_model gemini-pro`
+• Current options: {', '.join(config.AVAILABLE_GEMINI_MODELS[:3])}{'...' if len(config.AVAILABLE_GEMINI_MODELS) > 3 else ''}
 
 **File Handling:**
 • Send documents or photos to queue them
@@ -364,19 +374,21 @@ class ResponseFormatter:
 • `/clear_attachments` - Remove all queued attachments
 • Attachments are automatically cleared after successful forwarding
 
-**Model Selection:**
-• `/models` - Choose from available AI models
-• Current options: {', '.join(config.AVAILABLE_GEMINI_MODELS[:3])}{'...' if len(config.AVAILABLE_GEMINI_MODELS) > 3 else ''}
-
 **Limits:**
 • Max attachments per forward: {config.app_limits.MAX_ATTACHMENTS_PER_FORWARD}
 • Total email size limit: {format_file_size(config.email_limits.GMAIL_MAX_TOTAL_SIZE)}
 
 **Tips:**
-• Set your email first with `/email`
+• Set your email first with `/set_email your@email.com`
 • Queue multiple files before forwarding
 • Use `/status` to check what's ready to forward
 • Long AI responses automatically become email attachments
+
+**Command Examples:**
+• `/set_email john@example.com`
+• `/set_model gemini-pro`
+• `/forward`
+• `/status`
 """
     
     @staticmethod
@@ -534,6 +546,126 @@ class EmailCommandHandler(BotCommandHandler):
                 f"{BotConstants.EMOJI_ERROR} Sorry, there was an error with the email setup."
             )
             return ConversationHandler.END
+
+
+class SetEmailCommandHandler(BotCommandHandler):
+    """Handler for /set_email command with direct parameter."""
+    
+    def __init__(self, user_manager: UserDataManager):
+        self.user_manager = user_manager
+    
+    async def handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /set_email command with email parameter."""
+        chat_id = update.effective_chat.id
+        
+        try:
+            # Check if email was provided as argument
+            if context.args and len(context.args) > 0:
+                email_input = ' '.join(context.args).strip()
+                
+                # Validate email format
+                is_valid, error_message = UserValidator.validate_email(email_input)
+                
+                if not is_valid:
+                    await update.message.reply_text(
+                        f"{BotConstants.EMOJI_ERROR} {error_message}\n"
+                        f"Usage: `/set_email your@email.com`"
+                    )
+                    return
+                
+                # Save email
+                self.user_manager.update_user_data(chat_id, email=email_input)
+                
+                await update.message.reply_text(
+                    f"{BotConstants.EMOJI_SUCCESS} Email address set to: {email_input}\n"
+                    f"You can now use /forward to send AI responses and attachments!"
+                )
+                
+                logger.info(f"User {chat_id} set email via command: {email_input}")
+            else:
+                # No argument provided, show usage
+                bot_state = self.user_manager.get_bot_state(chat_id)
+                current_email = bot_state.user_data.email
+                
+                if current_email:
+                    message = (
+                        f"{BotConstants.EMOJI_EMAIL} Your current email: {current_email}\n\n"
+                        f"Usage: `/set_email your@email.com`\n"
+                        f"Or use `/email` for interactive setup."
+                    )
+                else:
+                    message = (
+                        f"{BotConstants.EMOJI_EMAIL} No email set.\n\n"
+                        f"Usage: `/set_email your@email.com`\n"
+                        f"Or use `/email` for interactive setup."
+                    )
+                
+                await update.message.reply_text(message)
+                
+        except Exception as e:
+            logger.error(f"Error in set_email command for user {chat_id}: {e}")
+            await update.message.reply_text(
+                f"{BotConstants.EMOJI_ERROR} Sorry, there was an error setting your email."
+            )
+
+
+class SetModelCommandHandler(BotCommandHandler):
+    """Handler for /set_model command with direct parameter."""
+    
+    def __init__(self, user_manager: UserDataManager):
+        self.user_manager = user_manager
+    
+    async def handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /set_model command with model parameter."""
+        chat_id = update.effective_chat.id
+        
+        try:
+            # Check if model was provided as argument
+            if context.args and len(context.args) > 0:
+                model_input = context.args[0].strip()
+                
+                # Validate model
+                if model_input not in config.AVAILABLE_GEMINI_MODELS:
+                    available_models = ', '.join(config.AVAILABLE_GEMINI_MODELS)
+                    await update.message.reply_text(
+                        f"{BotConstants.EMOJI_ERROR} Invalid model: {model_input}\n\n"
+                        f"Available models: {available_models}\n"
+                        f"Usage: `/set_model {config.AVAILABLE_GEMINI_MODELS[0]}`"
+                    )
+                    return
+                
+                # Save model
+                self.user_manager.update_user_data(chat_id, selected_model=model_input)
+                
+                await update.message.reply_text(
+                    f"{BotConstants.EMOJI_SUCCESS} AI model set to: **{model_input}**",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+                logger.info(f"User {chat_id} set model via command: {model_input}")
+            else:
+                # No argument provided, show usage
+                bot_state = self.user_manager.get_bot_state(chat_id)
+                current_model = bot_state.user_data.selected_model
+                available_models = ', '.join(config.AVAILABLE_GEMINI_MODELS)
+                
+                message = (
+                    f"🧠 **Current AI Model:** {current_model}\n\n"
+                    f"**Available models:** {available_models}\n\n"
+                    f"Usage: `/set_model {config.AVAILABLE_GEMINI_MODELS[0]}`\n"
+                    f"Or use `/models` for interactive selection."
+                )
+                
+                await update.message.reply_text(
+                    message,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+        except Exception as e:
+            logger.error(f"Error in set_model command for user {chat_id}: {e}")
+            await update.message.reply_text(
+                f"{BotConstants.EMOJI_ERROR} Sorry, there was an error setting the model."
+            )
 
 
 class ModelsCommandHandler(BotCommandHandler):
@@ -1151,6 +1283,8 @@ class TelegramAIBot:
         self.help_handler = HelpCommandHandler()
         self.status_handler = StatusCommandHandler(self.user_manager)
         self.email_handler = EmailCommandHandler(self.user_manager)
+        self.set_email_handler = SetEmailCommandHandler(self.user_manager)
+        self.set_model_handler = SetModelCommandHandler(self.user_manager)
         self.models_handler = ModelsCommandHandler(self.user_manager)
     
     def create_application(self) -> Application:
@@ -1174,6 +1308,9 @@ class TelegramAIBot:
         application.add_handler(TelegramCommandHandler("help", self.help_handler.handle))
         application.add_handler(TelegramCommandHandler("status", self.status_handler.handle))
         application.add_handler(email_conv_handler)
+        application.add_handler(TelegramCommandHandler("set_email", self.set_email_handler.handle))
+        application.add_handler(TelegramCommandHandler("update_email", self.set_email_handler.handle))  # Alias
+        application.add_handler(TelegramCommandHandler("set_model", self.set_model_handler.handle))
         application.add_handler(TelegramCommandHandler("models", self.models_handler.handle))
         application.add_handler(TelegramCommandHandler("forward", self.forwarding_service.forward_content))
         application.add_handler(TelegramCommandHandler("clear_attachments", self._clear_attachments))
