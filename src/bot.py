@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Any, Union
 from contextlib import asynccontextmanager
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application, CommandHandler as TelegramCommandHandler, MessageHandler, CallbackQueryHandler,
     ConversationHandler, ContextTypes, filters
@@ -68,10 +68,10 @@ Commands:
 /start - Start using the bot
 /help - Show detailed help
 /email - Set your email (interactive)
-/set_email <email> - Set email directly
-/update_email <email> - Alias for set_email
+/set_email email@example.com - Set email directly
+/update_email email@example.com - Alias for set_email
 /models - Choose AI model (interactive)
-/set_model <model> - Set model directly
+/set_model model_name - Set model directly
 /forward - Forward last response
 /status - Check your settings
 /clear_attachments - Clear attachment queue
@@ -451,7 +451,6 @@ class StartCommandHandler(BotCommandHandler):
             
             await update.message.reply_text(
                 BotConstants.WELCOME_MESSAGE,
-                parse_mode=ParseMode.MARKDOWN,
                 disable_web_page_preview=True
             )
             
@@ -479,7 +478,15 @@ class HelpCommandHandler(BotCommandHandler):
         except BadRequest as e:
             # Fallback to plain text if Markdown fails
             logger.warning(f"Markdown parsing failed for help message: {e}")
-            await update.message.reply_text(ResponseFormatter.format_help_message())
+            help_message_plain = ResponseFormatter.format_help_message()
+            # Remove markdown formatting for plain text
+            help_message_plain = help_message_plain.replace('**', '').replace('*', '')
+            await update.message.reply_text(help_message_plain)
+        except Exception as e:
+            logger.error(f"Error in help command: {e}")
+            await update.message.reply_text(
+                f"{BotConstants.EMOJI_ERROR} Sorry, there was an error displaying help."
+            )
 
 
 class StatusCommandHandler(BotCommandHandler):
@@ -496,15 +503,17 @@ class StatusCommandHandler(BotCommandHandler):
             bot_state = self.user_manager.get_bot_state(chat_id)
             status_message = ResponseFormatter.format_status_message(bot_state)
             
-            await update.message.reply_text(
-                status_message,
-                parse_mode=ParseMode.MARKDOWN,
-                disable_web_page_preview=True
-            )
-            
-        except BadRequest:
-            # Fallback to plain text if Markdown fails
-            await update.message.reply_text(status_message)
+            try:
+                await update.message.reply_text(
+                    status_message,
+                    parse_mode=ParseMode.MARKDOWN,
+                    disable_web_page_preview=True
+                )
+            except BadRequest:
+                # Fallback to plain text if Markdown fails
+                status_message_plain = status_message.replace('**', '').replace('*', '')
+                await update.message.reply_text(status_message_plain)
+                
         except Exception as e:
             logger.error(f"Error in status command for user {chat_id}: {e}")
             await update.message.reply_text(
@@ -1328,6 +1337,30 @@ class TelegramAIBot:
         
         return application
     
+    async def _setup_bot_menu(self, application: Application) -> None:
+        """Set up the bot menu commands that appear when users type '/'."""
+        commands = [
+            BotCommand("start", "Start using the bot"),
+            BotCommand("help", "Show detailed help"),
+            BotCommand("status", "Check your settings"),
+            BotCommand("forward", "Forward AI response or attachments"),
+            BotCommand("set_email", "Set email: /set_email user@example.com"),
+            BotCommand("email", "Set email (interactive)"),
+            BotCommand("set_model", "Set AI model: /set_model gemini-pro"),
+            BotCommand("models", "Choose AI model (interactive)"),
+            BotCommand("clear_attachments", "Clear attachment queue"),
+        ]
+        
+        try:
+            await application.bot.set_my_commands(commands)
+            logger.info("Bot menu commands set successfully")
+        except Exception as e:
+            logger.error(f"Failed to set bot menu commands: {e}")
+    
+    async def setup_menu(self, application: Application) -> None:
+        """Public method to setup menu - called during startup."""
+        await self._setup_bot_menu(application)
+    
     async def _handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle text messages for AI interaction."""
         chat_id = update.effective_chat.id
@@ -1447,6 +1480,12 @@ def main() -> None:
         
         # Create application
         application = bot.create_application()
+        
+        # Set up bot menu commands
+        async def post_init(app: Application) -> None:
+            await bot.setup_menu(app)
+        
+        application.post_init = post_init
         
         # Start bot
         logger.info("Bot is starting...")
